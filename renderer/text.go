@@ -24,6 +24,8 @@ type glyphCacheEntry struct {
 	advance float64 // advance width in pixels
 	originX int     // x offset from left edge to glyph origin
 	originY int     // y offset from top edge to baseline
+	centerX int     // x offset from left edge to horizontal center of mass
+	width   int     // tight width of the glyph (after cropping)
 }
 
 // GlyphCache holds pre-rendered glyph bitmaps
@@ -96,11 +98,55 @@ func (gc *GlyphCache) rasterize(r rune, size float64) *glyphCacheEntry {
 	// Draw the glyph
 	drawer.DrawString(string(r))
 
+	// Find tight bounds and center of mass
+	tightMinX, tightMaxX := width, 0
+	weightedSumX := 0.0
+	totalWeight := 0.0
+
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			alpha := float64(img.AlphaAt(x, y).A)
+			if alpha > 0 {
+				if x < tightMinX {
+					tightMinX = x
+				}
+				if x > tightMaxX {
+					tightMaxX = x
+				}
+				weightedSumX += float64(x) * alpha
+				totalWeight += alpha
+			}
+		}
+	}
+
+	// If no pixels found, return empty
+	if totalWeight == 0 || tightMaxX < tightMinX {
+		return &glyphCacheEntry{advance: fixedToFloat(advance)}
+	}
+
+	// Calculate center of mass
+	centerOfMassX := weightedSumX / totalWeight
+
+	// Crop to tight horizontal bounds
+	tightWidth := tightMaxX - tightMinX + 1
+	croppedImg := image.NewAlpha(image.Rect(0, 0, tightWidth, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < tightWidth; x++ {
+			croppedImg.SetAlpha(x, y, img.AlphaAt(x+tightMinX, y))
+		}
+	}
+
+	// Adjust center of mass and origin for cropped image
+	centerX := int(math.Round(centerOfMassX)) - tightMinX
+	originX := -minX - tightMinX
+
 	return &glyphCacheEntry{
-		img:     img,
+		img:     croppedImg,
 		advance: fixedToFloat(advance),
-		originX: -minX,
+		originX: originX,
 		originY: -minY,
+		centerX: centerX,
+		width:   tightWidth,
 	}
 }
 
@@ -132,7 +178,7 @@ type RenderSettings struct {
 	FontSize       float64 // Size of the main text
 	NumRows        int     // Number of rows to fill (0 = auto-calculate from FillScale)
 	DrawBackground bool    // Draw white background behind each filler letter
-	LetterPadding  float64 // Padding around letters for background (0 = no padding)
+	FillerSpacing  float64 // Spacing between filler letters in pixels (default: 0)
 }
 
 // fixedToFloat converts fixed.Int26_6 to float64
@@ -244,11 +290,12 @@ func (tr *TextRenderer) getGlyphSegments(r rune, size float64) ([]geom.PathSegme
 
 // renderFillerGlyph renders a single filler glyph at a position with rotation
 // If drawBg is true, draws a background rectangle first
-func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.Point, scale float64, drawBg bool, letterPadding float64, bgColor, fgColor color.RGBA) float64 {
+// The glyph is centered at pos using its horizontal center of mass
+func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.Point, scale float64, drawBg bool, bgColor, fgColor color.RGBA) float64 {
 	// Get pre-rendered glyph from cache
 	entry := tr.GlyphCache.Get(r, scale)
 	if entry.img == nil {
-		return entry.advance
+		return float64(entry.width)
 	}
 
 	// Rotate to follow tangent, +π to flip right-side up since we traverse paths backwards
@@ -260,13 +307,12 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 
 	// If drawing background, calculate transformed bounding box corners and draw rect
 	if drawBg {
-		pad := letterPadding
-		// Corners relative to glyph origin (which is at originX, originY in the image)
+		// Corners relative to center of mass (which is at centerX, originY in the image)
 		corners := []geom.Point{
-			{X: -pad, Y: -float64(entry.originY) - pad},
-			{X: w - float64(entry.originX) + pad, Y: -float64(entry.originY) - pad},
-			{X: w - float64(entry.originX) + pad, Y: h - float64(entry.originY) + pad},
-			{X: -pad, Y: h - float64(entry.originY) + pad},
+			{X: -float64(entry.centerX), Y: -float64(entry.originY)},
+			{X: w - float64(entry.centerX), Y: -float64(entry.originY)},
+			{X: w - float64(entry.centerX), Y: h - float64(entry.originY)},
+			{X: -float64(entry.centerX), Y: h - float64(entry.originY)},
 		}
 		for i, c := range corners {
 			corners[i] = c.Rotate(angle).Add(pos)
@@ -280,12 +326,11 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 	}
 
 	// Composite the rotated glyph onto the canvas
-	// The glyph origin is at (entry.originX, entry.originY) in the image
-	// We want to place this origin at pos
-	tr.Canvas.DrawRotatedImage(entry.img, pos.X, pos.Y, angle, entry.originX, entry.originY, fgColor)
+	// Center the glyph at pos using its center of mass (centerX) for horizontal positioning
+	tr.Canvas.DrawRotatedImage(entry.img, pos.X, pos.Y, angle, entry.centerX, entry.originY, fgColor)
 
-	// Return visual width of the glyph
-	return w - float64(entry.originX)
+	// Return tight width of the glyph
+	return float64(entry.width)
 }
 
 // RenderTextWithFiller renders main text using filler text along the curves
@@ -326,7 +371,7 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 				if numRows > 1 {
 					// Rows span (numRows-1)*fillerHeight, centered
 					totalSpan := float64(numRows-1) * fillerHeight
-					rowOffset = (float64(row)/float64(numRows-1)-0.5)*totalSpan
+					rowOffset = (float64(row)/float64(numRows-1) - 0.5) * totalSpan
 				}
 
 				dist := 0.0
@@ -349,12 +394,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					reverseIdx := len(fillerRunes) - 1 - (fillerIdx % len(fillerRunes))
 					fillerRune := fillerRunes[reverseIdx]
 					bgColor := color.RGBA{255, 255, 255, 255} // white background
-					charAdvance := tr.renderFillerGlyph(fillerRune, canvasPos, tangent, fillerHeight, settings.DrawBackground, settings.LetterPadding, bgColor, col)
+					charAdvance := tr.renderFillerGlyph(fillerRune, canvasPos, tangent, fillerHeight, settings.DrawBackground, bgColor, col)
 
 					if charAdvance < 1 {
 						charAdvance = fillerHeight * 0.6
 					}
-					dist += charAdvance * 1.1
+					dist += charAdvance + settings.FillerSpacing
 					fillerIdx++
 				}
 			}

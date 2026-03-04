@@ -14,24 +14,25 @@ import (
 )
 
 func main() {
-	// Parse arguments: main_text filler_text fill_scale [num_rows] [draw_bg] [letter_pad]
+	// Parse arguments: main_text filler_text fill_scale [num_rows] [draw_bg] [letter_pad] [filler_spacing]
 	if len(os.Args) < 4 {
-		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [draw_bg] [letter_pad]")
+		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [draw_bg] [letter_pad] [filler_spacing]")
 		fmt.Println()
-		fmt.Println("  main_text   - Text to render as large outlines")
-		fmt.Println("  filler_text - Text to repeat along the curves")
-		fmt.Println("  fill_scale  - Size of filler relative to stroke (0.05 to 1.0)")
-		fmt.Println("  num_rows    - Number of rows to fill (optional, default: auto)")
-		fmt.Println("  draw_bg     - Draw white background behind letters: 1=on, 0=off (default: 0)")
-		fmt.Println("  letter_pad  - Padding around letter backgrounds in pixels (default: 0)")
+		fmt.Println("  main_text      - Text to render as large outlines")
+		fmt.Println("  filler_text    - Text to repeat along the curves")
+		fmt.Println("  fill_scale     - Size of filler relative to stroke (0.05 to 1.0)")
+		fmt.Println("  num_rows       - Number of rows to fill (optional, default: auto)")
+		fmt.Println("  draw_bg        - Draw white background behind letters: 1=on, 0=off (default: 0)")
+		fmt.Println("  letter_pad     - Padding around letter backgrounds in pixels (default: 0)")
+		fmt.Println("  filler_spacing - Spacing between filler letters in pixels (default: 0)")
 		fmt.Println()
 		fmt.Println("Example: huaskii Hello world 0.5")
-		fmt.Println("Example: huaskii Hello world 0.5 3 1 2")
+		fmt.Println("Example: huaskii Hello world 0.5 3 1 2 5")
 		os.Exit(1)
 	}
 
 	mainText := os.Args[1]
-	fillerText := strings.Trim(os.Args[2], " ") + "   "
+	fillerText := strings.Trim(os.Args[2], " ") + "  "
 	fillScale, err := strconv.ParseFloat(os.Args[3], 64)
 	if err != nil {
 		log.Fatalf("invalid fill_scale: %v", err)
@@ -58,11 +59,11 @@ func main() {
 		drawBg = drawBgVal == 1
 	}
 
-	letterPad := 0.0
-	if len(os.Args) >= 7 {
-		letterPad, err = strconv.ParseFloat(os.Args[6], 64)
+	fillerSpacing := 0.0
+	if len(os.Args) >= 8 {
+		fillerSpacing, err = strconv.ParseFloat(os.Args[7], 64)
 		if err != nil {
-			log.Fatalf("invalid letter_pad: %v", err)
+			log.Fatalf("invalid filler_spacing: %v", err)
 		}
 	}
 
@@ -103,7 +104,7 @@ func main() {
 		FillScale:      fillScale,
 		NumRows:        numRows,
 		DrawBackground: drawBg,
-		LetterPadding:  letterPad,
+		FillerSpacing:  fillerSpacing,
 	}
 
 	// Center vertically
