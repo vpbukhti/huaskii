@@ -124,3 +124,17 @@ func (c *Canvas) DrawRotatedImage(img *image.Alpha, x, y float64, angle float64,
 		}
 	}
 }
+
+// CompositeOver blends another canvas onto this canvas using alpha compositing
+func (c *Canvas) CompositeOver(src *Canvas) {
+	for y := 0; y < c.Height && y < src.Height; y++ {
+		for x := 0; x < c.Width && x < src.Width; x++ {
+			srcPx := src.Img.RGBAAt(x, y)
+			if srcPx.A == 0 {
+				continue
+			}
+			alpha := float64(srcPx.A) / 255.0
+			c.BlendPixel(x, y, srcPx, alpha)
+		}
+	}
+}

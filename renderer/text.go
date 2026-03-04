@@ -288,14 +288,29 @@ func (tr *TextRenderer) getGlyphSegments(r rune, size float64) ([]geom.PathSegme
 	return result, fixedToFloat(adv), nil
 }
 
-// renderFillerGlyph renders a single filler glyph at a position with rotation
-// If drawBg is true, draws a background rectangle first
+// renderFillerGlyphToCanvas renders a single filler glyph to a target canvas
 // The glyph is centered at pos using its horizontal center of mass
-func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.Point, scale float64, drawBg bool, bgColor, fgColor color.RGBA) float64 {
-	// Get pre-rendered glyph from cache
+func (tr *TextRenderer) renderFillerGlyphToCanvas(r rune, pos geom.Point, tangent geom.Point, scale float64, fgColor color.RGBA, target *Canvas) float64 {
 	entry := tr.GlyphCache.Get(r, scale)
 	if entry.img == nil {
 		return float64(entry.width)
+	}
+
+	// Rotate to follow tangent, +π to flip right-side up since we traverse paths backwards
+	angle := math.Atan2(tangent.Y, tangent.X) + math.Pi
+
+	// Composite the rotated glyph onto the target canvas
+	target.DrawRotatedImage(entry.img, pos.X, pos.Y, angle, entry.centerX, entry.originY, fgColor)
+
+	return float64(entry.width)
+}
+
+// renderFillerBackgroundToCanvas renders a background rectangle for a glyph to a target canvas
+// padding is the extra space around the glyph bounding box
+func (tr *TextRenderer) renderFillerBackgroundToCanvas(r rune, pos geom.Point, tangent geom.Point, scale float64, padding float64, bgColor color.RGBA, target *Canvas) {
+	entry := tr.GlyphCache.Get(r, scale)
+	if entry.img == nil {
+		return
 	}
 
 	// Rotate to follow tangent, +π to flip right-side up since we traverse paths backwards
@@ -305,32 +320,25 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 	w := float64(bounds.Dx())
 	h := float64(bounds.Dy())
 
-	// If drawing background, calculate transformed bounding box corners and draw rect
-	if drawBg {
-		// Corners relative to center of mass (which is at centerX, originY in the image)
-		corners := []geom.Point{
-			{X: -float64(entry.centerX), Y: -float64(entry.originY)},
-			{X: w - float64(entry.centerX), Y: -float64(entry.originY)},
-			{X: w - float64(entry.centerX), Y: h - float64(entry.originY)},
-			{X: -float64(entry.centerX), Y: h - float64(entry.originY)},
-		}
-		for i, c := range corners {
-			corners[i] = c.Rotate(angle).Add(pos)
-		}
-		tr.Rasterizer.AddLine(corners[0], corners[1])
-		tr.Rasterizer.AddLine(corners[1], corners[2])
-		tr.Rasterizer.AddLine(corners[2], corners[3])
-		tr.Rasterizer.AddLine(corners[3], corners[0])
-		tr.Rasterizer.Fill(bgColor)
-		tr.Rasterizer.Clear()
+	// Create a rasterizer for the target canvas
+	rast := NewRasterizer(target)
+
+	// Corners relative to center of mass with padding
+	pad := padding
+	corners := []geom.Point{
+		{X: -float64(entry.centerX) - pad, Y: -float64(entry.originY) - pad},
+		{X: w - float64(entry.centerX) + pad, Y: -float64(entry.originY) - pad},
+		{X: w - float64(entry.centerX) + pad, Y: h - float64(entry.originY) + pad},
+		{X: -float64(entry.centerX) - pad, Y: h - float64(entry.originY) + pad},
 	}
-
-	// Composite the rotated glyph onto the canvas
-	// Center the glyph at pos using its center of mass (centerX) for horizontal positioning
-	tr.Canvas.DrawRotatedImage(entry.img, pos.X, pos.Y, angle, entry.centerX, entry.originY, fgColor)
-
-	// Return tight width of the glyph
-	return float64(entry.width)
+	for i, c := range corners {
+		corners[i] = c.Rotate(angle).Add(pos)
+	}
+	rast.AddLine(corners[0], corners[1])
+	rast.AddLine(corners[1], corners[2])
+	rast.AddLine(corners[2], corners[3])
+	rast.AddLine(corners[3], corners[0])
+	rast.Fill(bgColor)
 }
 
 // RenderTextWithFiller renders main text using filler text along the curves
@@ -345,12 +353,15 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 		}
 	}
 
-	cursorX := startX
 	fillerRunes := []rune(settings.FillerText)
 	if len(fillerRunes) == 0 {
 		return
 	}
 
+	bgColor := color.RGBA{255, 255, 255, 255} // white background
+	bgPadding := 5.0                          // 5px padding around each letter's bbox
+
+	cursorX := startX
 	fillerIdx := 0
 
 	for _, mainRune := range settings.MainText {
@@ -364,6 +375,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 			if segLength < 1.0 {
 				continue
 			}
+
+			// Create temporary canvases for this segment
+			// bgCanvas: white background rectangles (clears space for letters)
+			// letterCanvas: the actual filler letters
+			bgCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
+			letterCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
 
 			for row := 0; row < numRows; row++ {
 				// Pack rows tightly based on filler height, centered on curve
@@ -393,8 +410,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					// Use runes in reverse order to counteract backwards path traversal
 					reverseIdx := len(fillerRunes) - 1 - (fillerIdx % len(fillerRunes))
 					fillerRune := fillerRunes[reverseIdx]
-					bgColor := color.RGBA{255, 255, 255, 255} // white background
-					charAdvance := tr.renderFillerGlyph(fillerRune, canvasPos, tangent, fillerHeight, settings.DrawBackground, bgColor, col)
+
+					// Draw background rectangle to bgCanvas
+					tr.renderFillerBackgroundToCanvas(fillerRune, canvasPos, tangent, fillerHeight, bgPadding, bgColor, bgCanvas)
+
+					// Draw letter to letterCanvas
+					charAdvance := tr.renderFillerGlyphToCanvas(fillerRune, canvasPos, tangent, fillerHeight, col, letterCanvas)
 
 					if charAdvance < 1 {
 						charAdvance = fillerHeight * 0.6
@@ -403,6 +424,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					fillerIdx++
 				}
 			}
+
+			// Composite this segment's layers onto main canvas:
+			// 1. First apply white backgrounds (clears space)
+			// 2. Then apply letters on top
+			tr.Canvas.CompositeOver(bgCanvas)
+			tr.Canvas.CompositeOver(letterCanvas)
 		}
 
 		cursorX += advance
