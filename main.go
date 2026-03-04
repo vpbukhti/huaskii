@@ -48,7 +48,7 @@ func main() {
 	}
 
 	// Load the font file
-	fontData, err := os.ReadFile("assets/IBMPlexSans-VariableFont_wdth,wght.ttf")
+	fontData, err := os.ReadFile("assets/Roboto-VariableFont_wdth,wght.ttf")
 	if err != nil {
 		log.Fatalf("failed to read font: %v", err)
 	}
@@ -58,8 +58,17 @@ func main() {
 		log.Fatalf("failed to parse font: %v", err)
 	}
 
-	// Create canvas (high resolution)
-	width, height := 2200, 1200
+	// Settings
+	fontSize := 1000.0
+	strokeWidth := 50.0
+	padding := 100.0
+
+	// Calculate canvas dimensions based on text
+	textWidth := renderer.MeasureText(font, mainText, fontSize)
+	width := int(textWidth + padding*2)
+	height := int(fontSize + padding*2) // 1.4 factor for ascenders/descenders
+
+	// Create canvas
 	canvas := renderer.NewCanvas(width, height)
 	canvas.Fill(color.White)
 
@@ -70,17 +79,17 @@ func main() {
 	settings := renderer.RenderSettings{
 		MainText:    mainText,
 		FillerText:  fillerText,
-		FontSize:    1000.0,
-		StrokeWidth: 50.0,
+		FontSize:    fontSize,
+		StrokeWidth: strokeWidth,
 		FillScale:   fillScale,
 		NumRows:     numRows,
 	}
 
 	// Center vertically
-	baseline := float64(height)/2 + settings.FontSize*0.3
+	baseline := float64(height)/2 + fontSize*0.3
 
 	// Render
-	textRenderer.RenderTextWithFiller(settings, 50, baseline, color.RGBA{0, 0, 0, 255})
+	textRenderer.RenderTextWithFiller(settings, padding, baseline, color.RGBA{0, 0, 0, 255})
 
 	// Ensure output directory exists
 	os.MkdirAll("output", 0755)

@@ -41,6 +41,27 @@ func fixedToFloat(f fixed.Int26_6) float64 {
 	return float64(f) / 64.0
 }
 
+// MeasureText returns the total advance width of a string at a given font size
+func MeasureText(font *sfnt.Font, text string, size float64) float64 {
+	var buf sfnt.Buffer
+	ppem := fixed.Int26_6(size * 64)
+	totalWidth := 0.0
+
+	for _, r := range text {
+		glyphIndex, err := font.GlyphIndex(&buf, r)
+		if err != nil {
+			continue
+		}
+		adv, err := font.GlyphAdvance(&buf, glyphIndex, ppem, 0)
+		if err != nil {
+			continue
+		}
+		totalWidth += fixedToFloat(adv)
+	}
+
+	return totalWidth
+}
+
 // getGlyphSegments returns the path segments for a glyph
 func (tr *TextRenderer) getGlyphSegments(r rune, size float64) ([]geom.PathSegment, float64, error) {
 	ppem := fixed.Int26_6(size * 64)
