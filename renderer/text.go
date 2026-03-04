@@ -110,12 +110,32 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 		return 0
 	}
 
+	// Calculate bounding box to find visual bounds
+	minX := math.MaxFloat64
+	maxX := -math.MaxFloat64
+	for _, seg := range segments {
+		for _, p := range seg.Points {
+			if p.X < minX {
+				minX = p.X
+			}
+			if p.X > maxX {
+				maxX = p.X
+			}
+		}
+	}
+	if minX == math.MaxFloat64 {
+		minX = 0
+		maxX = advance
+	}
+
 	// Rotate to follow tangent, +π to flip right-side up since we traverse paths backwards
 	angle := math.Atan2(tangent.Y, tangent.X) + math.Pi
 
 	for _, seg := range segments {
 		transformedPoints := make([]geom.Point, len(seg.Points))
 		for i, p := range seg.Points {
+			// Shift to remove left side bearing
+			p.X -= minX
 			rotated := p.Rotate(angle)
 			transformedPoints[i] = rotated.Add(pos)
 		}
@@ -130,7 +150,8 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 		}
 	}
 
-	return advance
+	// Return actual visual width of the glyph
+	return maxX - minX
 }
 
 // RenderTextWithFiller renders main text using filler text along the curves
