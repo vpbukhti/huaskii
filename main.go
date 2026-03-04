@@ -32,7 +32,7 @@ func main() {
 	}
 
 	mainText := os.Args[1]
-	fillerText := strings.Trim(os.Args[2], " ") + "  "
+	fillerText := strings.Trim(os.Args[2], " ") + " "
 	fillScale, err := strconv.ParseFloat(os.Args[3], 64)
 	if err != nil {
 		log.Fatalf("invalid fill_scale: %v", err)

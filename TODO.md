@@ -1,17 +1,12 @@
 # Future Development
 
-## Filler Letter Orientation
-Reorient filler letters for better readability by reversing curve segments:
-- For each bezier segment, check its overall direction (start to end)
-- If segment goes right-to-left (or bottom-to-top for vertical segments), reverse it
-- Reversing a bezier = reversing control point order:
-  - Line: `p0, p1` → `p1, p0`
-  - Quadratic: `p0, p1, p2` → `p2, p1, p0`
-  - Cubic: `p0, p1, p2, p3` → `p3, p2, p1, p0`
-- This way existing placement algorithm naturally places letters left-to-right
-- Decision criteria options:
-  - Simple: reverse if `end.X < start.X`
-  - Smarter: consider dominant direction (horizontal vs vertical segments)
+## Filler Letter Orientation - DONE
+Implemented using average normal direction:
+- Sample normal at 5 points along curve (t = 0.1, 0.3, 0.5, 0.7, 0.9)
+- Use right-perpendicular as outward normal for clockwise TrueType contours
+- If average normal points upward (Y < 0), reverse the curve
+- Reversing = reversing control point order
+- See `geom/bezier.go`: `GetNormalAt()`, `AverageNormal()`, `ShouldReverse()`, `Reversed()`
 
 ## Row Packing Control
 Add parameter to control how tightly packed rows of filler letters are:
@@ -19,8 +14,14 @@ Add parameter to control how tightly packed rows of filler letters are:
 - Add `RowSpacing` or `RowPadding` setting to RenderSettings
 - Allow negative values for overlap, positive for gaps
 
-## Randomize Starting Position
-Randomize the starting position of filler letters along each curve:
-- Avoid visible striping patterns when multiple rows are rendered
-- Add random offset (0 to charAdvance) at the start of each row
-- Consider adding a `RandomSeed` parameter for reproducible results
+## Randomize Starting Position - DONE
+Implemented per-row randomization:
+- Random starting character index (skipping whitespace)
+- Random distance offset (0 to 0.5 * fillerHeight) at start of each row
+- Prevents visible striping patterns across multiple rows
+
+## Main Text Background
+Add background to main text letter by letter:
+- Draw a background shape behind each main text letter before rendering filler
+- Could use the glyph bounding box or actual glyph outline with padding
+- Useful for improving contrast/readability of the final output

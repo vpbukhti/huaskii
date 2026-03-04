@@ -95,3 +95,42 @@ func (seg PathSegment) GetPointAndTangent(t float64) (Point, Point) {
 	}
 	return Point{}, Point{1, 0}
 }
+
+// GetNormalAt returns the right-perpendicular normal at parameter t
+// For clockwise contours (TrueType fonts), this is the outward normal
+// Right normal of tangent (tx, ty) is (ty, -tx)
+func (seg PathSegment) GetNormalAt(t float64) Point {
+	_, tangent := seg.GetPointAndTangent(t)
+	return Point{X: tangent.Y, Y: -tangent.X}
+}
+
+// AverageNormal calculates the average normal across 5 sample points
+func (seg PathSegment) AverageNormal() Point {
+	samples := []float64{0.1, 0.3, 0.5, 0.7, 0.9}
+	avg := Point{X: 0, Y: 0}
+	for _, t := range samples {
+		n := seg.GetNormalAt(t)
+		avg.X += n.X
+		avg.Y += n.Y
+	}
+	avg.X /= float64(len(samples))
+	avg.Y /= float64(len(samples))
+	return avg
+}
+
+// ShouldReverse returns true if the average normal points upward (negative Y)
+// or to the left (negative X). Reversing makes letters readable.
+func (seg PathSegment) ShouldReverse() bool {
+	avgNormal := seg.AverageNormal()
+	return avgNormal.Y < 0 || avgNormal.X < 0
+}
+
+// Reversed returns a new PathSegment with control points in reverse order.
+// The curve shape is identical but traversed in the opposite direction.
+func (seg PathSegment) Reversed() PathSegment {
+	reversed := PathSegment{Type: seg.Type, Points: make([]Point, len(seg.Points))}
+	for i, p := range seg.Points {
+		reversed.Points[len(seg.Points)-1-i] = p
+	}
+	return reversed
+}

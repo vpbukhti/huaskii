@@ -4,6 +4,8 @@ import (
 	"image"
 	"image/color"
 	"math"
+	"math/rand"
+	"unicode"
 
 	"github.com/vpbukhti/huaskii/geom"
 	"golang.org/x/image/font"
@@ -362,7 +364,6 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 	bgPadding := 5.0                          // 5px padding around each letter's bbox
 
 	cursorX := startX
-	fillerIdx := 0
 
 	for _, mainRune := range settings.MainText {
 		mainSegments, advance, err := tr.getGlyphSegments(mainRune, settings.FontSize)
@@ -371,6 +372,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 		}
 
 		for _, seg := range mainSegments {
+			// Normalize curve direction based on average normal
+			// If average normal points upward, reverse the curve
+			if seg.ShouldReverse() {
+				seg = seg.Reversed()
+			}
+
 			segLength := seg.EstimateLength()
 			if segLength < 1.0 {
 				continue
@@ -391,7 +398,20 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					rowOffset = (float64(row)/float64(numRows-1) - 0.5) * totalSpan
 				}
 
-				dist := 0.0
+				// Randomize starting position to avoid striping
+				// Pick a random starting index, skip whitespace
+				startIdx := rand.Intn(len(fillerRunes))
+				for i := 0; i < len(fillerRunes); i++ {
+					if !unicode.IsSpace(fillerRunes[(startIdx+i)%len(fillerRunes)]) {
+						startIdx = (startIdx + i) % len(fillerRunes)
+						break
+					}
+				}
+				rowFillerIdx := startIdx
+
+				// Random distance offset to prevent vertical alignment
+				dist := rand.Float64() * fillerHeight * 0.5
+
 				for dist < segLength {
 					t := dist / segLength
 					if t > 1 {
@@ -408,7 +428,7 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					}
 
 					// Use runes in reverse order to counteract backwards path traversal
-					reverseIdx := len(fillerRunes) - 1 - (fillerIdx % len(fillerRunes))
+					reverseIdx := len(fillerRunes) - 1 - (rowFillerIdx % len(fillerRunes))
 					fillerRune := fillerRunes[reverseIdx]
 
 					// Draw background rectangle to bgCanvas
@@ -421,7 +441,7 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 						charAdvance = fillerHeight * 0.6
 					}
 					dist += charAdvance + settings.FillerSpacing
-					fillerIdx++
+					rowFillerIdx++
 				}
 			}
 
