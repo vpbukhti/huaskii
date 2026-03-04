@@ -52,6 +52,6 @@ func (p Point) Rotate(angle float64) Point {
 
 // Close checks if two points are approximately equal
 func (p Point) Close(q Point) bool {
-	const epsilon = 0.01
+	const epsilon = 0.001
 	return math.Abs(p.X-q.X) < epsilon && math.Abs(p.Y-q.Y) < epsilon
 }

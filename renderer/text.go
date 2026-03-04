@@ -83,14 +83,25 @@ func (tr *TextRenderer) getGlyphSegments(r rune, size float64) ([]geom.PathSegme
 
 	var result []geom.PathSegment
 	var currentPos geom.Point
+	var subpathStart geom.Point
+	hasSubpath := false
 
 	for _, seg := range segments {
 		switch seg.Op {
 		case sfnt.SegmentOpMoveTo:
+			// Close previous subpath if exists
+			if hasSubpath && !currentPos.Close(subpathStart) {
+				result = append(result, geom.PathSegment{
+					Type:   0,
+					Points: []geom.Point{currentPos, subpathStart},
+				})
+			}
 			currentPos = geom.Point{
 				X: fixedToFloat(seg.Args[0].X),
 				Y: fixedToFloat(seg.Args[0].Y),
 			}
+			subpathStart = currentPos
+			hasSubpath = true
 		case sfnt.SegmentOpLineTo:
 			pt := geom.Point{
 				X: fixedToFloat(seg.Args[0].X),
@@ -119,6 +130,14 @@ func (tr *TextRenderer) getGlyphSegments(r rune, size float64) ([]geom.PathSegme
 			})
 			currentPos = p3
 		}
+	}
+
+	// Close final subpath
+	if hasSubpath && !currentPos.Close(subpathStart) {
+		result = append(result, geom.PathSegment{
+			Type:   0,
+			Points: []geom.Point{currentPos, subpathStart},
+		})
 	}
 
 	return result, fixedToFloat(adv), nil

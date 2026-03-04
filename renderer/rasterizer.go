@@ -29,7 +29,7 @@ func NewRasterizer(canvas *Canvas) *Rasterizer {
 
 // AddLine adds a line segment to the rasterizer
 func (r *Rasterizer) AddLine(p0, p1 geom.Point) {
-	if math.Abs(p0.Y-p1.Y) < 0.001 {
+	if math.Abs(p0.Y-p1.Y) < 0.0001 {
 		return
 	}
 	if p0.Close(p1) {
