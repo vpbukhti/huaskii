@@ -33,6 +33,7 @@ type RenderSettings struct {
 	FillerText  string  // Text to repeat along the paths
 	MainText    string  // Text to render
 	FontSize    float64 // Size of the main text
+	NumRows     int     // Number of rows to fill (0 = auto-calculate from FillScale)
 }
 
 // fixedToFloat converts fixed.Int26_6 to float64
@@ -135,9 +136,13 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 // RenderTextWithFiller renders main text using filler text along the curves
 func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, baseline float64, col color.RGBA) {
 	fillerHeight := settings.StrokeWidth * settings.FillScale
-	numRows := int(math.Ceil(settings.StrokeWidth / fillerHeight))
-	if numRows < 1 {
-		numRows = 1
+	numRows := settings.NumRows
+	if numRows <= 0 {
+		// Auto-calculate from FillScale
+		numRows = int(math.Ceil(settings.StrokeWidth / fillerHeight))
+		if numRows < 1 {
+			numRows = 1
+		}
 	}
 
 	cursorX := startX

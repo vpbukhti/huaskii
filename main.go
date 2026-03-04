@@ -6,38 +6,30 @@ import (
 	"image/png"
 	"log"
 	"os"
-	"runtime/pprof"
 	"strconv"
+	"strings"
 
 	"github.com/vpbukhti/huaskii/renderer"
 	"golang.org/x/image/font/sfnt"
 )
 
 func main() {
-	// CPU profiling
-	cpuFile, err := os.Create("output/cpu.prof")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer cpuFile.Close()
-	pprof.StartCPUProfile(cpuFile)
-	defer pprof.StopCPUProfile()
-
-	// Parse arguments: main_text filler_text fill_scale
+	// Parse arguments: main_text filler_text fill_scale [num_rows]
 	if len(os.Args) < 4 {
-		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale>")
+		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows]")
 		fmt.Println()
 		fmt.Println("  main_text   - Text to render as large outlines")
 		fmt.Println("  filler_text - Text to repeat along the curves")
 		fmt.Println("  fill_scale  - Size of filler relative to stroke (0.05 to 1.0)")
-		fmt.Println("                1.0 = single row, 0.5 = 2 rows, 0.25 = 4 rows")
+		fmt.Println("  num_rows    - Number of rows to fill (optional, default: auto)")
 		fmt.Println()
 		fmt.Println("Example: huaskii Hello world 0.5")
+		fmt.Println("Example: huaskii Hello world 0.5 3")
 		os.Exit(1)
 	}
 
 	mainText := os.Args[1]
-	fillerText := os.Args[2]
+	fillerText := strings.Trim(os.Args[2], " ") + " "
 	fillScale, err := strconv.ParseFloat(os.Args[3], 64)
 	if err != nil {
 		log.Fatalf("invalid fill_scale: %v", err)
@@ -47,8 +39,16 @@ func main() {
 		log.Fatalf("fill_scale must be between 0.01 and 1.0")
 	}
 
+	numRows := 0 // 0 = auto
+	if len(os.Args) >= 5 {
+		numRows, err = strconv.Atoi(os.Args[4])
+		if err != nil {
+			log.Fatalf("invalid num_rows: %v", err)
+		}
+	}
+
 	// Load the font file
-	fontData, err := os.ReadFile("assets/Roboto-VariableFont_wdth,wght.ttf")
+	fontData, err := os.ReadFile("assets/IBMPlexSans-VariableFont_wdth,wght.ttf")
 	if err != nil {
 		log.Fatalf("failed to read font: %v", err)
 	}
@@ -59,7 +59,7 @@ func main() {
 	}
 
 	// Create canvas (high resolution)
-	width, height := 4200, 1200
+	width, height := 2200, 1200
 	canvas := renderer.NewCanvas(width, height)
 	canvas.Fill(color.White)
 
@@ -70,9 +70,10 @@ func main() {
 	settings := renderer.RenderSettings{
 		MainText:    mainText,
 		FillerText:  fillerText,
-		FontSize:    540.0,
-		StrokeWidth: 48.0,
+		FontSize:    1000.0,
+		StrokeWidth: 50.0,
 		FillScale:   fillScale,
+		NumRows:     numRows,
 	}
 
 	// Center vertically
@@ -94,14 +95,6 @@ func main() {
 	if err := png.Encode(outFile, canvas.Img); err != nil {
 		log.Fatalf("failed to encode PNG: %v", err)
 	}
-
-	// Memory profiling
-	memFile, err := os.Create("output/mem.prof")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer memFile.Close()
-	pprof.WriteHeapProfile(memFile)
 
 	log.Printf("Rendered '%s' with filler '%s' (scale %.2f) to output/output.png", mainText, fillerText, fillScale)
 	log.Println("Profiles written to output/cpu.prof and output/mem.prof")
