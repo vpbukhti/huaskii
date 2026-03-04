@@ -109,12 +109,14 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 		return 0
 	}
 
-	angle := math.Atan2(tangent.Y, tangent.X)
+	// Rotate to follow tangent, +π to flip right-side up since we traverse paths backwards
+	angle := math.Atan2(tangent.Y, tangent.X) + math.Pi
 
 	for _, seg := range segments {
 		transformedPoints := make([]geom.Point, len(seg.Points))
 		for i, p := range seg.Points {
-			p.Y = -p.Y
+			// Mirror X to correct letter orientation after π rotation
+			p.X = -p.X
 			rotated := p.Rotate(angle)
 			transformedPoints[i] = rotated.Add(pos)
 		}
@@ -161,9 +163,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 			}
 
 			for row := 0; row < numRows; row++ {
+				// Pack rows tightly based on filler height, centered on curve
 				rowOffset := 0.0
 				if numRows > 1 {
-					rowOffset = (float64(row)/float64(numRows-1) - 0.5) * settings.StrokeWidth
+					// Rows span (numRows-1)*fillerHeight, centered
+					totalSpan := float64(numRows-1) * fillerHeight
+					rowOffset = (float64(row)/float64(numRows-1)-0.5)*totalSpan
 				}
 
 				dist := 0.0
