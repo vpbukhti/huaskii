@@ -115,8 +115,6 @@ func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.P
 	for _, seg := range segments {
 		transformedPoints := make([]geom.Point, len(seg.Points))
 		for i, p := range seg.Points {
-			// Mirror X to correct letter orientation after π rotation
-			p.X = -p.X
 			rotated := p.Rotate(angle)
 			transformedPoints[i] = rotated.Add(pos)
 		}
@@ -187,7 +185,9 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 						Y: baseline + pos.Y,
 					}
 
-					fillerRune := fillerRunes[fillerIdx%len(fillerRunes)]
+					// Use runes in reverse order to counteract backwards path traversal
+					reverseIdx := len(fillerRunes) - 1 - (fillerIdx % len(fillerRunes))
+					fillerRune := fillerRunes[reverseIdx]
 					charAdvance := tr.renderFillerGlyph(fillerRune, canvasPos, tangent, fillerHeight)
 
 					if charAdvance < 1 {
