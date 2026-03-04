@@ -165,3 +165,15 @@ func (r *Rasterizer) Fill(col color.RGBA) {
 func (r *Rasterizer) Clear() {
 	r.Edges = r.Edges[:0]
 }
+
+// AddRect adds a rectangle to the rasterizer
+func (r *Rasterizer) AddRect(x, y, width, height float64) {
+	p0 := geom.Point{X: x, Y: y}
+	p1 := geom.Point{X: x + width, Y: y}
+	p2 := geom.Point{X: x + width, Y: y + height}
+	p3 := geom.Point{X: x, Y: y + height}
+	r.AddLine(p0, p1)
+	r.AddLine(p1, p2)
+	r.AddLine(p2, p3)
+	r.AddLine(p3, p0)
+}

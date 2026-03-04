@@ -14,17 +14,19 @@ import (
 )
 
 func main() {
-	// Parse arguments: main_text filler_text fill_scale [num_rows]
+	// Parse arguments: main_text filler_text fill_scale [num_rows] [draw_bg] [letter_pad]
 	if len(os.Args) < 4 {
-		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows]")
+		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [draw_bg] [letter_pad]")
 		fmt.Println()
 		fmt.Println("  main_text   - Text to render as large outlines")
 		fmt.Println("  filler_text - Text to repeat along the curves")
 		fmt.Println("  fill_scale  - Size of filler relative to stroke (0.05 to 1.0)")
 		fmt.Println("  num_rows    - Number of rows to fill (optional, default: auto)")
+		fmt.Println("  draw_bg     - Draw white background behind letters: 1=on, 0=off (default: 0)")
+		fmt.Println("  letter_pad  - Padding around letter backgrounds in pixels (default: 0)")
 		fmt.Println()
 		fmt.Println("Example: huaskii Hello world 0.5")
-		fmt.Println("Example: huaskii Hello world 0.5 3")
+		fmt.Println("Example: huaskii Hello world 0.5 3 1 2")
 		os.Exit(1)
 	}
 
@@ -44,6 +46,23 @@ func main() {
 		numRows, err = strconv.Atoi(os.Args[4])
 		if err != nil {
 			log.Fatalf("invalid num_rows: %v", err)
+		}
+	}
+
+	drawBg := false
+	if len(os.Args) >= 6 {
+		drawBgVal, err := strconv.Atoi(os.Args[5])
+		if err != nil {
+			log.Fatalf("invalid draw_bg: %v", err)
+		}
+		drawBg = drawBgVal == 1
+	}
+
+	letterPad := 0.0
+	if len(os.Args) >= 7 {
+		letterPad, err = strconv.ParseFloat(os.Args[6], 64)
+		if err != nil {
+			log.Fatalf("invalid letter_pad: %v", err)
 		}
 	}
 
@@ -77,12 +96,14 @@ func main() {
 
 	// Settings
 	settings := renderer.RenderSettings{
-		MainText:    mainText,
-		FillerText:  fillerText,
-		FontSize:    fontSize,
-		StrokeWidth: strokeWidth,
-		FillScale:   fillScale,
-		NumRows:     numRows,
+		MainText:       mainText,
+		FillerText:     fillerText,
+		FontSize:       fontSize,
+		StrokeWidth:    strokeWidth,
+		FillScale:      fillScale,
+		NumRows:        numRows,
+		DrawBackground: drawBg,
+		LetterPadding:  letterPad,
 	}
 
 	// Center vertically
@@ -106,6 +127,4 @@ func main() {
 	}
 
 	log.Printf("Rendered '%s' with filler '%s' (scale %.2f) to output/output.png", mainText, fillerText, fillScale)
-	log.Println("Profiles written to output/cpu.prof and output/mem.prof")
-	log.Println("View with: go tool pprof -http=:8080 output/cpu.prof")
 }

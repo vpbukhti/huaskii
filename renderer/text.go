@@ -1,13 +1,108 @@
 package renderer
 
 import (
+	"image"
 	"image/color"
 	"math"
 
 	"github.com/vpbukhti/huaskii/geom"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/opentype"
 	"golang.org/x/image/font/sfnt"
 	"golang.org/x/image/math/fixed"
 )
+
+// glyphKey identifies a cached glyph by rune and size
+type glyphKey struct {
+	r    rune
+	size int // size in pixels (rounded)
+}
+
+// glyphCacheEntry holds the pre-rendered glyph and its metrics
+type glyphCacheEntry struct {
+	img     *image.Alpha
+	advance float64 // advance width in pixels
+	originX int     // x offset from left edge to glyph origin
+	originY int     // y offset from top edge to baseline
+}
+
+// GlyphCache holds pre-rendered glyph bitmaps
+type GlyphCache struct {
+	cache map[glyphKey]*glyphCacheEntry
+	font  *sfnt.Font
+}
+
+// NewGlyphCache creates a new glyph cache
+func NewGlyphCache(f *sfnt.Font) *GlyphCache {
+	return &GlyphCache{
+		cache: make(map[glyphKey]*glyphCacheEntry),
+		font:  f,
+	}
+}
+
+// Get returns a pre-rendered glyph, rasterizing and caching if needed
+func (gc *GlyphCache) Get(r rune, size float64) *glyphCacheEntry {
+	key := glyphKey{r, int(size + 0.5)}
+	if entry, ok := gc.cache[key]; ok {
+		return entry
+	}
+
+	entry := gc.rasterize(r, size)
+	gc.cache[key] = entry
+	return entry
+}
+
+// rasterize renders a glyph using the standard font rasterizer
+func (gc *GlyphCache) rasterize(r rune, size float64) *glyphCacheEntry {
+	face, err := opentype.NewFace(gc.font, &opentype.FaceOptions{
+		Size:    size,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		return &glyphCacheEntry{}
+	}
+	defer face.Close()
+
+	// Get glyph metrics
+	bounds, advance, ok := face.GlyphBounds(r)
+	if !ok {
+		return &glyphCacheEntry{}
+	}
+
+	// Convert fixed-point bounds to pixels
+	minX := bounds.Min.X.Floor()
+	minY := bounds.Min.Y.Floor()
+	maxX := bounds.Max.X.Ceil()
+	maxY := bounds.Max.Y.Ceil()
+
+	width := maxX - minX
+	height := maxY - minY
+	if width <= 0 || height <= 0 {
+		return &glyphCacheEntry{advance: fixedToFloat(advance)}
+	}
+
+	// Create alpha image for the glyph
+	img := image.NewAlpha(image.Rect(0, 0, width, height))
+
+	// Create drawer
+	drawer := &font.Drawer{
+		Dst:  img,
+		Src:  image.White,
+		Face: face,
+		Dot:  fixed.Point26_6{X: fixed.I(-minX), Y: fixed.I(-minY)},
+	}
+
+	// Draw the glyph
+	drawer.DrawString(string(r))
+
+	return &glyphCacheEntry{
+		img:     img,
+		advance: fixedToFloat(advance),
+		originX: -minX,
+		originY: -minY,
+	}
+}
 
 // TextRenderer renders text using filler text along paths
 type TextRenderer struct {
@@ -15,6 +110,7 @@ type TextRenderer struct {
 	buf        sfnt.Buffer
 	Canvas     *Canvas
 	Rasterizer *Rasterizer
+	GlyphCache *GlyphCache
 }
 
 // NewTextRenderer creates a new text renderer
@@ -23,17 +119,20 @@ func NewTextRenderer(font *sfnt.Font, canvas *Canvas) *TextRenderer {
 		Font:       font,
 		Canvas:     canvas,
 		Rasterizer: NewRasterizer(canvas),
+		GlyphCache: NewGlyphCache(font),
 	}
 }
 
 // RenderSettings configures the text-on-path rendering
 type RenderSettings struct {
-	StrokeWidth float64 // Width of the stroke around curves
-	FillScale   float64 // Filler text height = StrokeWidth * FillScale (0.05 to 1.0)
-	FillerText  string  // Text to repeat along the paths
-	MainText    string  // Text to render
-	FontSize    float64 // Size of the main text
-	NumRows     int     // Number of rows to fill (0 = auto-calculate from FillScale)
+	StrokeWidth    float64 // Width of the stroke around curves
+	FillScale      float64 // Filler text height = StrokeWidth * FillScale (0.05 to 1.0)
+	FillerText     string  // Text to repeat along the paths
+	MainText       string  // Text to render
+	FontSize       float64 // Size of the main text
+	NumRows        int     // Number of rows to fill (0 = auto-calculate from FillScale)
+	DrawBackground bool    // Draw white background behind each filler letter
+	LetterPadding  float64 // Padding around letters for background (0 = no padding)
 }
 
 // fixedToFloat converts fixed.Int26_6 to float64
@@ -144,54 +243,49 @@ func (tr *TextRenderer) getGlyphSegments(r rune, size float64) ([]geom.PathSegme
 }
 
 // renderFillerGlyph renders a single filler glyph at a position with rotation
-func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.Point, scale float64) float64 {
-	segments, advance, err := tr.getGlyphSegments(r, scale)
-	if err != nil {
-		return 0
-	}
-
-	// Calculate bounding box to find visual bounds
-	minX := math.MaxFloat64
-	maxX := -math.MaxFloat64
-	for _, seg := range segments {
-		for _, p := range seg.Points {
-			if p.X < minX {
-				minX = p.X
-			}
-			if p.X > maxX {
-				maxX = p.X
-			}
-		}
-	}
-	if minX == math.MaxFloat64 {
-		minX = 0
-		maxX = advance
+// If drawBg is true, draws a background rectangle first
+func (tr *TextRenderer) renderFillerGlyph(r rune, pos geom.Point, tangent geom.Point, scale float64, drawBg bool, letterPadding float64, bgColor, fgColor color.RGBA) float64 {
+	// Get pre-rendered glyph from cache
+	entry := tr.GlyphCache.Get(r, scale)
+	if entry.img == nil {
+		return entry.advance
 	}
 
 	// Rotate to follow tangent, +π to flip right-side up since we traverse paths backwards
 	angle := math.Atan2(tangent.Y, tangent.X) + math.Pi
 
-	for _, seg := range segments {
-		transformedPoints := make([]geom.Point, len(seg.Points))
-		for i, p := range seg.Points {
-			// Shift to remove left side bearing
-			p.X -= minX
-			rotated := p.Rotate(angle)
-			transformedPoints[i] = rotated.Add(pos)
-		}
+	bounds := entry.img.Bounds()
+	w := float64(bounds.Dx())
+	h := float64(bounds.Dy())
 
-		switch seg.Type {
-		case 0:
-			tr.Rasterizer.AddLine(transformedPoints[0], transformedPoints[1])
-		case 1:
-			tr.Rasterizer.AddQuadBezier(transformedPoints[0], transformedPoints[1], transformedPoints[2], 16)
-		case 2:
-			tr.Rasterizer.AddCubicBezier(transformedPoints[0], transformedPoints[1], transformedPoints[2], transformedPoints[3], 16)
+	// If drawing background, calculate transformed bounding box corners and draw rect
+	if drawBg {
+		pad := letterPadding
+		// Corners relative to glyph origin (which is at originX, originY in the image)
+		corners := []geom.Point{
+			{X: -pad, Y: -float64(entry.originY) - pad},
+			{X: w - float64(entry.originX) + pad, Y: -float64(entry.originY) - pad},
+			{X: w - float64(entry.originX) + pad, Y: h - float64(entry.originY) + pad},
+			{X: -pad, Y: h - float64(entry.originY) + pad},
 		}
+		for i, c := range corners {
+			corners[i] = c.Rotate(angle).Add(pos)
+		}
+		tr.Rasterizer.AddLine(corners[0], corners[1])
+		tr.Rasterizer.AddLine(corners[1], corners[2])
+		tr.Rasterizer.AddLine(corners[2], corners[3])
+		tr.Rasterizer.AddLine(corners[3], corners[0])
+		tr.Rasterizer.Fill(bgColor)
+		tr.Rasterizer.Clear()
 	}
 
-	// Return actual visual width of the glyph
-	return maxX - minX
+	// Composite the rotated glyph onto the canvas
+	// The glyph origin is at (entry.originX, entry.originY) in the image
+	// We want to place this origin at pos
+	tr.Canvas.DrawRotatedImage(entry.img, pos.X, pos.Y, angle, entry.originX, entry.originY, fgColor)
+
+	// Return visual width of the glyph
+	return w - float64(entry.originX)
 }
 
 // RenderTextWithFiller renders main text using filler text along the curves
@@ -254,7 +348,8 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					// Use runes in reverse order to counteract backwards path traversal
 					reverseIdx := len(fillerRunes) - 1 - (fillerIdx % len(fillerRunes))
 					fillerRune := fillerRunes[reverseIdx]
-					charAdvance := tr.renderFillerGlyph(fillerRune, canvasPos, tangent, fillerHeight)
+					bgColor := color.RGBA{255, 255, 255, 255} // white background
+					charAdvance := tr.renderFillerGlyph(fillerRune, canvasPos, tangent, fillerHeight, settings.DrawBackground, settings.LetterPadding, bgColor, col)
 
 					if charAdvance < 1 {
 						charAdvance = fillerHeight * 0.6
@@ -264,9 +359,6 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 				}
 			}
 		}
-
-		tr.Rasterizer.Fill(col)
-		tr.Rasterizer.Clear()
 
 		cursorX += advance
 	}
