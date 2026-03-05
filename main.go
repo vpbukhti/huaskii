@@ -14,20 +14,19 @@ import (
 )
 
 func main() {
-	// Parse arguments: main_text filler_text fill_scale [num_rows] [draw_bg] [letter_pad] [filler_spacing]
+	// Parse arguments: main_text filler_text fill_scale [num_rows] [filler_spacing] [row_spacing]
 	if len(os.Args) < 4 {
-		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [draw_bg] [letter_pad] [filler_spacing]")
+		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [filler_spacing] [row_spacing]")
 		fmt.Println()
 		fmt.Println("  main_text      - Text to render as large outlines")
 		fmt.Println("  filler_text    - Text to repeat along the curves")
 		fmt.Println("  fill_scale     - Size of filler relative to stroke (0.05 to 1.0)")
 		fmt.Println("  num_rows       - Number of rows to fill (optional, default: auto)")
-		fmt.Println("  draw_bg        - Draw white background behind letters: 1=on, 0=off (default: 0)")
-		fmt.Println("  letter_pad     - Padding around letter backgrounds in pixels (default: 0)")
-		fmt.Println("  filler_spacing - Spacing between filler letters in pixels (default: 0)")
+		fmt.Println("  filler_spacing - Horizontal spacing between letters (can be negative, default: 0)")
+		fmt.Println("  row_spacing    - Vertical spacing between rows (can be negative, default: 0)")
 		fmt.Println()
 		fmt.Println("Example: huaskii Hello world 0.5")
-		fmt.Println("Example: huaskii Hello world 0.5 3 1 2 5")
+		fmt.Println("Example: huaskii Hello world 0.5 3 -2 -3")
 		os.Exit(1)
 	}
 
@@ -50,20 +49,19 @@ func main() {
 		}
 	}
 
-	drawBg := false
-	if len(os.Args) >= 6 {
-		drawBgVal, err := strconv.Atoi(os.Args[5])
-		if err != nil {
-			log.Fatalf("invalid draw_bg: %v", err)
-		}
-		drawBg = drawBgVal == 1
-	}
-
 	fillerSpacing := 0.0
-	if len(os.Args) >= 8 {
-		fillerSpacing, err = strconv.ParseFloat(os.Args[7], 64)
+	if len(os.Args) >= 6 {
+		fillerSpacing, err = strconv.ParseFloat(os.Args[5], 64)
 		if err != nil {
 			log.Fatalf("invalid filler_spacing: %v", err)
+		}
+	}
+
+	rowSpacing := 0.0
+	if len(os.Args) >= 7 {
+		rowSpacing, err = strconv.ParseFloat(os.Args[6], 64)
+		if err != nil {
+			log.Fatalf("invalid row_spacing: %v", err)
 		}
 	}
 
@@ -97,14 +95,14 @@ func main() {
 
 	// Settings
 	settings := renderer.RenderSettings{
-		MainText:       mainText,
-		FillerText:     fillerText,
-		FontSize:       fontSize,
-		StrokeWidth:    strokeWidth,
-		FillScale:      fillScale,
-		NumRows:        numRows,
-		DrawBackground: drawBg,
-		FillerSpacing:  fillerSpacing,
+		MainText:      mainText,
+		FillerText:    fillerText,
+		FontSize:      fontSize,
+		StrokeWidth:   strokeWidth,
+		FillScale:     fillScale,
+		NumRows:       numRows,
+		FillerSpacing: fillerSpacing,
+		RowSpacing:    rowSpacing,
 	}
 
 	// Center vertically

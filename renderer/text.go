@@ -193,7 +193,8 @@ type RenderSettings struct {
 	FontSize       float64 // Size of the main text
 	NumRows        int     // Number of rows to fill (0 = auto-calculate from FillScale)
 	DrawBackground bool    // Draw white background behind each filler letter
-	FillerSpacing  float64 // Spacing between filler letters in pixels (default: 0)
+	FillerSpacing  float64 // Horizontal spacing between filler letters in pixels (can be negative)
+	RowSpacing     float64 // Vertical spacing between rows in pixels (can be negative for overlap)
 }
 
 // fixedToFloat converts fixed.Int26_6 to float64
@@ -406,11 +407,12 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 			letterCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
 
 			for row := 0; row < numRows; row++ {
-				// Pack rows tightly based on filler height, centered on curve
+				// Pack rows with configurable spacing, centered on curve
 				rowOffset := 0.0
 				if numRows > 1 {
-					// Rows span (numRows-1)*fillerHeight, centered
-					totalSpan := float64(numRows-1) * fillerHeight
+					// Row step = fillerHeight + RowSpacing (negative = tighter)
+					rowStep := fillerHeight + settings.RowSpacing
+					totalSpan := float64(numRows-1) * rowStep
 					rowOffset = (float64(row)/float64(numRows-1) - 0.5) * totalSpan
 				}
 
