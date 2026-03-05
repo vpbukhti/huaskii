@@ -26,14 +26,9 @@ Add background to main text letter by letter:
 - Could use the glyph bounding box or actual glyph outline with padding
 - Useful for improving contrast/readability of the final output
 
-## Fix Filler Letters Center of Mass
-Inconsistent horizontal spacing between filler letters on a single row:
-- Some letters clump together, others have too much padding on left/right
-
-Proposed fix (X adjustment only, no vertical adjustment):
-1. Sum brightness for each vertical column (X position) of the rasterized glyph
-2. Find the X position that represents the horizontal center of mass
-3. Normalize all glyph widths to the same size (use the largest needed)
-   - Pre-scan all filler characters to find max width
-   - Position each glyph so its center of mass aligns with bbox center
-4. Spacing is then uniform: each glyph occupies the same horizontal space
+## Fix Filler Letters Center of Mass - DONE
+Implemented uniform horizontal spacing:
+- Added `PreloadAndGetMaxWidth()` to pre-scan all filler characters
+- All characters now advance by the same uniform width (max of all filler glyphs)
+- Each glyph is still centered by its individual center of mass
+- Results in consistent spacing regardless of character shape

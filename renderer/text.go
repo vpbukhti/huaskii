@@ -56,6 +56,19 @@ func (gc *GlyphCache) Get(r rune, size float64) *glyphCacheEntry {
 	return entry
 }
 
+// PreloadAndGetMaxWidth pre-renders all runes and returns the maximum width
+// This ensures uniform spacing when placing characters along curves
+func (gc *GlyphCache) PreloadAndGetMaxWidth(runes []rune, size float64) int {
+	maxWidth := 0
+	for _, r := range runes {
+		entry := gc.Get(r, size)
+		if entry.width > maxWidth {
+			maxWidth = entry.width
+		}
+	}
+	return maxWidth
+}
+
 // rasterize renders a glyph using the standard font rasterizer
 func (gc *GlyphCache) rasterize(r rune, size float64) *glyphCacheEntry {
 	face, err := opentype.NewFace(gc.font, &opentype.FaceOptions{
@@ -360,6 +373,9 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 		return
 	}
 
+	// Pre-render all filler glyphs and get uniform width for consistent spacing
+	uniformWidth := tr.GlyphCache.PreloadAndGetMaxWidth(fillerRunes, fillerHeight)
+
 	bgColor := color.RGBA{255, 255, 255, 255} // white background
 	bgPadding := 5.0                          // 5px padding around each letter's bbox
 
@@ -435,12 +451,10 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 					tr.renderFillerBackgroundToCanvas(fillerRune, canvasPos, tangent, fillerHeight, bgPadding, bgColor, bgCanvas)
 
 					// Draw letter to letterCanvas
-					charAdvance := tr.renderFillerGlyphToCanvas(fillerRune, canvasPos, tangent, fillerHeight, col, letterCanvas)
+					tr.renderFillerGlyphToCanvas(fillerRune, canvasPos, tangent, fillerHeight, col, letterCanvas)
 
-					if charAdvance < 1 {
-						charAdvance = fillerHeight * 0.6
-					}
-					dist += charAdvance + settings.FillerSpacing
+					// Use uniform width for consistent spacing
+					dist += float64(uniformWidth) + settings.FillerSpacing
 					rowFillerIdx++
 				}
 			}
