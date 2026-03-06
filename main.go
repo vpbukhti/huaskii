@@ -77,9 +77,9 @@ func main() {
 	}
 
 	// Settings
-	fontSize := 1000.0
-	strokeWidth := 50.0
-	padding := 100.0
+	fontSize := 2000.0
+	strokeWidth := 100.0
+	padding := 200.0
 
 	// Calculate canvas dimensions based on text
 	textWidth := renderer.MeasureText(font, mainText, fontSize)
