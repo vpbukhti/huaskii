@@ -186,15 +186,16 @@ func NewTextRenderer(font *sfnt.Font, canvas *Canvas) *TextRenderer {
 
 // RenderSettings configures the text-on-path rendering
 type RenderSettings struct {
-	StrokeWidth    float64 // Width of the stroke around curves
-	FillScale      float64 // Filler text height = StrokeWidth * FillScale (0.05 to 1.0)
-	FillerText     string  // Text to repeat along the paths
-	MainText       string  // Text to render
-	FontSize       float64 // Size of the main text
-	NumRows        int     // Number of rows to fill (0 = auto-calculate from FillScale)
-	DrawBackground bool    // Draw white background behind each filler letter
-	FillerSpacing  float64 // Horizontal spacing between filler letters in pixels (can be negative)
-	RowSpacing     float64 // Vertical spacing between rows in pixels (can be negative for overlap)
+	StrokeWidth     float64    // Width of the stroke around curves
+	FillScale       float64    // Filler text height = StrokeWidth * FillScale (0.05 to 1.0)
+	FillerText      string     // Text to repeat along the paths
+	MainText        string     // Text to render
+	FontSize        float64    // Size of the main text
+	NumRows         int        // Number of rows to fill (0 = auto-calculate from FillScale)
+	DrawBackground  bool       // Draw white background behind each filler letter
+	FillerSpacing   float64    // Horizontal spacing between filler letters in pixels (can be negative)
+	RowSpacing      float64    // Vertical spacing between rows in pixels (can be negative for overlap)
+	BackgroundColor color.RGBA // Solid background fill for main text letters (zero alpha = disabled)
 }
 
 // fixedToFloat converts fixed.Int26_6 to float64
@@ -357,6 +358,129 @@ func (tr *TextRenderer) renderFillerBackgroundToCanvas(r rune, pos geom.Point, t
 	rast.Fill(bgColor)
 }
 
+// RenderTextMasked renders main text as a mask filled with rows of small repeating text
+// Simple approach: big letters = white background mask, small text fills it, rest is transparent
+func (tr *TextRenderer) RenderTextMasked(settings RenderSettings, startX, baseline float64, bgColor, fgColor color.RGBA) {
+	fillerHeight := settings.StrokeWidth * settings.FillScale
+	fillerRunes := []rune(settings.FillerText)
+	if len(fillerRunes) == 0 {
+		return
+	}
+
+	// Step 1: Render main text as solid fill (this becomes our mask)
+	maskCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
+	tr.renderMainTextFilled(settings, startX, baseline, maskCanvas)
+
+	// Step 2: Render rows of repeating small text across entire canvas
+	textCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
+	tr.renderFillerRows(fillerRunes, fillerHeight, settings.FillerSpacing, settings.RowSpacing, fgColor, textCanvas)
+
+	// Step 3: Apply mask and composite onto main canvas
+	// Where mask is set: show bgColor background + fgColor text
+	// Where mask is not set: transparent
+	for y := 0; y < tr.Canvas.Height; y++ {
+		for x := 0; x < tr.Canvas.Width; x++ {
+			maskAlpha := maskCanvas.Img.RGBAAt(x, y).A
+			if maskAlpha == 0 {
+				continue // transparent area
+			}
+
+			// Get the small text pixel
+			textPx := textCanvas.Img.RGBAAt(x, y)
+
+			// Composite: background color first, then text on top
+			a := float64(maskAlpha) / 255.0
+			if textPx.A > 0 {
+				// Text pixel - blend fgColor
+				textA := float64(textPx.A) / 255.0
+				finalR := uint8(float64(bgColor.R)*(1-textA) + float64(fgColor.R)*textA)
+				finalG := uint8(float64(bgColor.G)*(1-textA) + float64(fgColor.G)*textA)
+				finalB := uint8(float64(bgColor.B)*(1-textA) + float64(fgColor.B)*textA)
+				tr.Canvas.Img.Set(x, y, color.RGBA{finalR, finalG, finalB, uint8(255 * a)})
+			} else {
+				// No text - just background
+				tr.Canvas.Img.Set(x, y, color.RGBA{bgColor.R, bgColor.G, bgColor.B, uint8(255 * a)})
+			}
+		}
+	}
+}
+
+// renderMainTextFilled renders the main text as solid white fill
+func (tr *TextRenderer) renderMainTextFilled(settings RenderSettings, startX, baseline float64, target *Canvas) {
+	face, err := opentype.NewFace(tr.Font, &opentype.FaceOptions{
+		Size:    settings.FontSize,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		return
+	}
+	defer face.Close()
+
+	drawer := &font.Drawer{
+		Dst:  target.Img,
+		Src:  image.White,
+		Face: face,
+		Dot:  fixed.Point26_6{X: fixed.I(int(startX)), Y: fixed.I(int(baseline))},
+	}
+	drawer.DrawString(settings.MainText)
+}
+
+// renderFillerRows renders rows of repeating small text across the entire canvas
+func (tr *TextRenderer) renderFillerRows(fillerRunes []rune, fillerHeight, spacing, rowSpacing float64, col color.RGBA, target *Canvas) {
+	face, err := opentype.NewFace(tr.Font, &opentype.FaceOptions{
+		Size:    fillerHeight,
+		DPI:     72,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		return
+	}
+	defer face.Close()
+
+	// Calculate line height
+	lineHeight := fillerHeight + rowSpacing
+
+	// Render rows from top to bottom
+	y := fillerHeight // start at first line baseline
+	runeIdx := 0
+
+	for y < float64(target.Height)+fillerHeight {
+		x := 0.0
+		for x < float64(target.Width) {
+			r := fillerRunes[runeIdx%len(fillerRunes)]
+			runeIdx++
+
+			// Skip spaces for visual clarity but still advance
+			if r == ' ' {
+				// Get advance width for space
+				if idx, err := tr.Font.GlyphIndex(&tr.buf, r); err == nil {
+					if adv, err := tr.Font.GlyphAdvance(&tr.buf, idx, fixed.Int26_6(fillerHeight*64), 0); err == nil {
+						x += fixedToFloat(adv) + spacing
+					}
+				}
+				continue
+			}
+
+			drawer := &font.Drawer{
+				Dst:  target.Img,
+				Src:  image.NewUniform(col),
+				Face: face,
+				Dot:  fixed.Point26_6{X: fixed.I(int(x)), Y: fixed.I(int(y))},
+			}
+			drawer.DrawString(string(r))
+
+			// Get advance width
+			if idx, err := tr.Font.GlyphIndex(&tr.buf, r); err == nil {
+				if adv, err := tr.Font.GlyphAdvance(&tr.buf, idx, fixed.Int26_6(fillerHeight*64), 0); err == nil {
+					x += fixedToFloat(adv) + spacing
+				}
+			}
+		}
+		y += lineHeight
+	}
+}
+
 // RenderTextWithFiller renders main text using filler text along the curves
 func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, baseline float64, col color.RGBA) {
 	fillerHeight := settings.StrokeWidth * settings.FillScale
@@ -380,6 +504,70 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 	bgColor := color.RGBA{255, 255, 255, 255} // white background
 	bgPadding := 5.0                          // 5px padding around each letter's bbox
 
+	// PASS 1: Render solid background fill for main text letters
+	if settings.BackgroundColor.A > 0 {
+		// Render main text to mask
+		maskCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
+		tr.renderMainTextFilled(settings, startX, baseline, maskCanvas)
+
+		// Calculate expansion based on filler rows (extra padding for fatter look)
+		rowStep := fillerHeight + settings.RowSpacing
+		totalSpan := float64(numRows-1) * rowStep
+		expansion := int(math.Ceil(totalSpan/2+fillerHeight/2+bgPadding)) + 20 // extra fat
+
+		w, h := tr.Canvas.Width, tr.Canvas.Height
+
+		// Precompute circular kernel offsets for rounded dilation
+		var circleOffsets [][2]int
+		for dy := -expansion; dy <= expansion; dy++ {
+			for dx := -expansion; dx <= expansion; dx++ {
+				if dx*dx+dy*dy <= expansion*expansion {
+					circleOffsets = append(circleOffsets, [2]int{dx, dy})
+				}
+			}
+		}
+
+		// Dilate mask with circular kernel
+		dilatedMask := make([][]uint8, h)
+		for y := 0; y < h; y++ {
+			dilatedMask[y] = make([]uint8, w)
+		}
+
+		// For each mask pixel, expand to all circle offsets
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				a := maskCanvas.Img.RGBAAt(x, y).A
+				if a > 0 {
+					for _, off := range circleOffsets {
+						nx, ny := x+off[0], y+off[1]
+						if nx >= 0 && nx < w && ny >= 0 && ny < h {
+							if a > dilatedMask[ny][nx] {
+								dilatedMask[ny][nx] = a
+							}
+						}
+					}
+				}
+			}
+		}
+
+		// Composite dilated mask
+		for y := 0; y < h; y++ {
+			for x := 0; x < w; x++ {
+				maxAlpha := dilatedMask[y][x]
+				if maxAlpha > 0 {
+					a := float64(maxAlpha) / 255.0
+					existing := tr.Canvas.Img.RGBAAt(x, y)
+					newR := uint8(float64(existing.R)*(1-a) + float64(settings.BackgroundColor.R)*a)
+					newG := uint8(float64(existing.G)*(1-a) + float64(settings.BackgroundColor.G)*a)
+					newB := uint8(float64(existing.B)*(1-a) + float64(settings.BackgroundColor.B)*a)
+					newA := uint8(math.Min(255, float64(existing.A)+float64(settings.BackgroundColor.A)*a))
+					tr.Canvas.Img.Set(x, y, color.RGBA{newR, newG, newB, newA})
+				}
+			}
+		}
+	}
+
+	// PASS 2: Render filler text along the curves
 	cursorX := startX
 
 	for _, mainRune := range settings.MainText {

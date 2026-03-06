@@ -14,9 +14,9 @@ import (
 )
 
 func main() {
-	// Parse arguments: main_text filler_text fill_scale [num_rows] [filler_spacing] [row_spacing]
+	// Parse arguments: main_text filler_text fill_scale [num_rows] [filler_spacing] [row_spacing] [font_path]
 	if len(os.Args) < 4 {
-		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [filler_spacing] [row_spacing]")
+		fmt.Println("Usage: huaskii <main_text> <filler_text> <fill_scale> [num_rows] [filler_spacing] [row_spacing] [font_path]")
 		fmt.Println()
 		fmt.Println("  main_text      - Text to render as large outlines")
 		fmt.Println("  filler_text    - Text to repeat along the curves")
@@ -24,9 +24,11 @@ func main() {
 		fmt.Println("  num_rows       - Number of rows to fill (optional, default: auto)")
 		fmt.Println("  filler_spacing - Horizontal spacing between letters (can be negative, default: 0)")
 		fmt.Println("  row_spacing    - Vertical spacing between rows (can be negative, default: 0)")
+		fmt.Println("  font_path      - Path to TTF/OTF font file (optional, default: Roboto)")
 		fmt.Println()
 		fmt.Println("Example: huaskii Hello world 0.5")
 		fmt.Println("Example: huaskii Hello world 0.5 3 -2 -3")
+		fmt.Println("Example: huaskii Hello world 0.5 0 0 0 /path/to/font.ttf")
 		os.Exit(1)
 	}
 
@@ -65,10 +67,15 @@ func main() {
 		}
 	}
 
+	fontPath := "assets/Roboto-VariableFont_wdth,wght.ttf"
+	if len(os.Args) >= 8 {
+		fontPath = os.Args[7]
+	}
+
 	// Load the font file
-	fontData, err := os.ReadFile("assets/Roboto-VariableFont_wdth,wght.ttf")
+	fontData, err := os.ReadFile(fontPath)
 	if err != nil {
-		log.Fatalf("failed to read font: %v", err)
+		log.Fatalf("failed to read font '%s': %v", fontPath, err)
 	}
 
 	font, err := sfnt.Parse(fontData)
@@ -86,29 +93,30 @@ func main() {
 	width := int(textWidth + padding*2)
 	height := int(fontSize + padding*2) // 1.4 factor for ascenders/descenders
 
-	// Create canvas
+	// Create canvas with transparent background
 	canvas := renderer.NewCanvas(width, height)
-	canvas.Fill(color.White)
+	canvas.Fill(color.RGBA{0, 0, 0, 0}) // transparent
 
 	// Create renderer
 	textRenderer := renderer.NewTextRenderer(font, canvas)
 
 	// Settings
 	settings := renderer.RenderSettings{
-		MainText:      mainText,
-		FillerText:    fillerText,
-		FontSize:      fontSize,
-		StrokeWidth:   strokeWidth,
-		FillScale:     fillScale,
-		NumRows:       numRows,
-		FillerSpacing: fillerSpacing,
-		RowSpacing:    rowSpacing,
+		MainText:        mainText,
+		FillerText:      fillerText,
+		FontSize:        fontSize,
+		StrokeWidth:     strokeWidth,
+		FillScale:       fillScale,
+		NumRows:         numRows,
+		FillerSpacing:   fillerSpacing,
+		RowSpacing:      rowSpacing,
+		BackgroundColor: color.RGBA{255, 255, 255, 255}, // white letter background
 	}
 
 	// Center vertically
 	baseline := float64(height)/2 + fontSize*0.3
 
-	// Render
+	// Render with curve-following filler text
 	textRenderer.RenderTextWithFiller(settings, padding, baseline, color.RGBA{0, 0, 0, 255})
 
 	// Ensure output directory exists
