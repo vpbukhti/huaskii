@@ -504,20 +504,19 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 	bgColor := color.RGBA{255, 255, 255, 255} // white background
 	bgPadding := 5.0                          // 5px padding around each letter's bbox
 
-	// PASS 1: Render solid background fill for main text letters
+	// PASS 1: Render fat dilated background for main text letters
 	if settings.BackgroundColor.A > 0 {
-		// Render main text to mask
 		maskCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
 		tr.renderMainTextFilled(settings, startX, baseline, maskCanvas)
 
-		// Calculate expansion based on filler rows (extra padding for fatter look)
+		// Calculate expansion for fat look
 		rowStep := fillerHeight + settings.RowSpacing
 		totalSpan := float64(numRows-1) * rowStep
-		expansion := int(math.Ceil(totalSpan/2+fillerHeight/2+bgPadding)) + 20 // extra fat
+		expansion := int(math.Ceil(totalSpan/2+fillerHeight/2+bgPadding)) + 20
 
 		w, h := tr.Canvas.Width, tr.Canvas.Height
 
-		// Precompute circular kernel offsets for rounded dilation
+		// Precompute circular kernel for rounded dilation
 		var circleOffsets [][2]int
 		for dy := -expansion; dy <= expansion; dy++ {
 			for dx := -expansion; dx <= expansion; dx++ {
@@ -527,13 +526,11 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 			}
 		}
 
-		// Dilate mask with circular kernel
+		// Dilate mask
 		dilatedMask := make([][]uint8, h)
 		for y := 0; y < h; y++ {
 			dilatedMask[y] = make([]uint8, w)
 		}
-
-		// For each mask pixel, expand to all circle offsets
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
 				a := maskCanvas.Img.RGBAAt(x, y).A
@@ -550,25 +547,28 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 			}
 		}
 
-		// Composite dilated mask
+		// Composite fat background
 		for y := 0; y < h; y++ {
 			for x := 0; x < w; x++ {
-				maxAlpha := dilatedMask[y][x]
-				if maxAlpha > 0 {
-					a := float64(maxAlpha) / 255.0
+				if a := dilatedMask[y][x]; a > 0 {
+					alpha := float64(a) / 255.0
 					existing := tr.Canvas.Img.RGBAAt(x, y)
-					newR := uint8(float64(existing.R)*(1-a) + float64(settings.BackgroundColor.R)*a)
-					newG := uint8(float64(existing.G)*(1-a) + float64(settings.BackgroundColor.G)*a)
-					newB := uint8(float64(existing.B)*(1-a) + float64(settings.BackgroundColor.B)*a)
-					newA := uint8(math.Min(255, float64(existing.A)+float64(settings.BackgroundColor.A)*a))
+					newR := uint8(float64(existing.R)*(1-alpha) + float64(settings.BackgroundColor.R)*alpha)
+					newG := uint8(float64(existing.G)*(1-alpha) + float64(settings.BackgroundColor.G)*alpha)
+					newB := uint8(float64(existing.B)*(1-alpha) + float64(settings.BackgroundColor.B)*alpha)
+					newA := uint8(math.Min(255, float64(existing.A)+float64(settings.BackgroundColor.A)*alpha))
 					tr.Canvas.Img.Set(x, y, color.RGBA{newR, newG, newB, newA})
 				}
 			}
 		}
 	}
 
-	// PASS 2: Render filler text along the curves
+	// PASS 2: Render per-segment tubes + filler text on top
 	cursorX := startX
+
+	// Calculate total row span for tube width
+	rowStep := fillerHeight + settings.RowSpacing
+	totalRowSpan := float64(numRows-1)*rowStep + fillerHeight + bgPadding*2
 
 	for _, mainRune := range settings.MainText {
 		mainSegments, advance, err := tr.getGlyphSegments(mainRune, settings.FontSize)
@@ -588,9 +588,55 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 				continue
 			}
 
-			// Create temporary canvases for this segment
-			// bgCanvas: white background rectangles (clears space for letters)
-			// letterCanvas: the actual filler letters
+			// Create a single canvas for this entire segment (background + text)
+			segmentCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
+
+			// Render tube-shaped background for this segment
+			if settings.BackgroundColor.A > 0 {
+				halfSpan := totalRowSpan / 2
+
+				// Sample points along curve to create tube polygon
+				numSamples := int(segLength/5) + 2
+				if numSamples < 10 {
+					numSamples = 10
+				}
+
+				// Build two edges of the tube (+ and - perpendicular offset)
+				plusEdge := make([]geom.Point, numSamples)
+				minusEdge := make([]geom.Point, numSamples)
+
+				for i := 0; i < numSamples; i++ {
+					t := float64(i) / float64(numSamples-1)
+					pos, tangent := seg.GetPointAndTangent(t)
+					perp := tangent.Perpendicular()
+
+					plusEdge[i] = geom.Point{
+						X: pos.X + cursorX + perp.X*halfSpan,
+						Y: baseline + pos.Y + perp.Y*halfSpan,
+					}
+					minusEdge[i] = geom.Point{
+						X: pos.X + cursorX - perp.X*halfSpan,
+						Y: baseline + pos.Y - perp.Y*halfSpan,
+					}
+				}
+
+				// Create polygon: plusEdge forward, minusEdge backward
+				rast := NewRasterizer(segmentCanvas)
+				for i := 0; i < numSamples-1; i++ {
+					rast.AddLine(plusEdge[i], plusEdge[i+1])
+				}
+				// Connect plus end to minus end
+				rast.AddLine(plusEdge[numSamples-1], minusEdge[numSamples-1])
+				// Minus edge backward
+				for i := numSamples - 1; i > 0; i-- {
+					rast.AddLine(minusEdge[i], minusEdge[i-1])
+				}
+				// Connect back to start
+				rast.AddLine(minusEdge[0], plusEdge[0])
+				rast.Fill(settings.BackgroundColor)
+			}
+
+			// Now render filler text on top of the segment canvas
 			bgCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
 			letterCanvas := NewCanvas(tr.Canvas.Width, tr.Canvas.Height)
 
@@ -649,11 +695,14 @@ func (tr *TextRenderer) RenderTextWithFiller(settings RenderSettings, startX, ba
 				}
 			}
 
-			// Composite this segment's layers onto main canvas:
+			// Composite filler text layers onto segment canvas:
 			// 1. First apply white backgrounds (clears space)
 			// 2. Then apply letters on top
-			tr.Canvas.CompositeOver(bgCanvas)
-			tr.Canvas.CompositeOver(letterCanvas)
+			segmentCanvas.CompositeOver(bgCanvas)
+			segmentCanvas.CompositeOver(letterCanvas)
+
+			// Composite entire segment (tube background + filler text) onto main canvas
+			tr.Canvas.CompositeOver(segmentCanvas)
 		}
 
 		cursorX += advance
